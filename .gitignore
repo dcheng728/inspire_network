@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.so
+.venv/
+.env
+.ruff_cache/
+.pytest_cache/
+.claude/
+examples/collab_network.html
+.DS_Store

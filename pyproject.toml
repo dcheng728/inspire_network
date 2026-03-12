@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inspire-tools"
+version = "0.1.0"
+description = "Tools for fetching and analyzing data from INSPIRE-HEP"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "networkx>=3.0",
+    "matplotlib>=3.7",
+    "scipy>=1.10",
+    "pyvis>=0.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "ruff>=0.1"]
+
+[project.scripts]
+inspire-papers = "inspire_tools.cli:papers_main"
+inspire-categories = "inspire_tools.cli:categories_main"
+inspire-collab = "inspire_tools.cli:collab_main"
+
+[tool.ruff]
+line-length = 100
