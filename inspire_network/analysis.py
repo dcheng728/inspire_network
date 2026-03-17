@@ -561,7 +561,6 @@ var currentInfoType = null;
 var currentInfoId = null;
 var navHistory = [];
 var currentPapers = [];
-var originalNodeStyles = {};
 
 // ── Utilities ──────────────────────────────────────
 function paperAge(d) {
@@ -794,7 +793,6 @@ async function addAuthor(bai) {
         nodeDS.add({id:bai, label:lastName||bai, shape:"circle", size:35,
             color:nodeColor, font:nodeFont, title:bai
         });
-        originalNodeStyles[bai] = {color:JSON.parse(JSON.stringify(nodeColor)), font:JSON.parse(JSON.stringify(nodeFont))};
         // Add vis.js edges
         var maxLog = getMaxLog();
         var ekeys = Object.keys(GRAPH_DATA.edges);
@@ -817,7 +815,6 @@ async function addAuthor(bai) {
 function removeAuthor(bai) {
     if (!GRAPH_DATA.authors[bai]) return;
     delete GRAPH_DATA.authors[bai];
-    delete originalNodeStyles[bai];
     GRAPH_DATA.network_bais = GRAPH_DATA.network_bais.filter(function(b){return b!==bai;});
     var ekeys = Object.keys(GRAPH_DATA.edges);
     for (var i=0;i<ekeys.length;i++) {
@@ -1048,17 +1045,7 @@ function renderPapers(papers, sortBy) {
                      padding:padding});
     }
     network.once("stabilizationIterationsDone", function() {
-        setTimeout(function() {
-            fitNetwork();
-            // Cache original node styles
-            var allN = network.body.data.nodes.get();
-            for (var i=0;i<allN.length;i++) {
-                originalNodeStyles[allN[i].id] = {
-                    color: JSON.parse(JSON.stringify(allN[i].color||{})),
-                    font: JSON.parse(JSON.stringify(allN[i].font||{}))
-                };
-            }
-        }, 300);
+        setTimeout(fitNetwork, 300);
     });
     window.addEventListener("resize", function() { fitNetwork(); });
     var container = document.getElementById("mynetwork");
@@ -1093,7 +1080,7 @@ function renderPapers(papers, sortBy) {
                 nodeUpdates.push({id:n.id,
                     color:{background:"#d0d0d0",border:"#bbb",
                            highlight:{background:"#d0d0d0",border:"#bbb"}},
-                    font:{color:"#ccc",size:(n.font?n.font.size:16),face:"arial",strokeWidth:0}});
+                    font:{color:"#999",size:(n.font?n.font.size:16),face:"arial",strokeWidth:0}});
             }
         }
         network.body.data.nodes.update(nodeUpdates);
@@ -1108,17 +1095,16 @@ function renderPapers(papers, sortBy) {
         network.body.data.edges.update(edgeUpdates);
     });
     network.on("blurNode", function() {
-        // Restore original node styles
+        // Restore all nodes to standard blue style
         var allNodes = network.body.data.nodes.get();
         var nodeUpdates = [];
         for (var i=0;i<allNodes.length;i++) {
             var n = allNodes[i];
-            var orig = originalNodeStyles[n.id];
-            if (orig) {
-                nodeUpdates.push({id:n.id,
-                    color:JSON.parse(JSON.stringify(orig.color)),
-                    font:JSON.parse(JSON.stringify(orig.font))});
-            }
+            nodeUpdates.push({id:n.id,
+                color:{background:"#4C72B0",border:"#3a5a8c",
+                       highlight:{background:"#5c8fd6",border:"#3a5a8c"}},
+                font:{color:"#ffffff",size:(n.font?n.font.size:16),face:"arial",
+                      strokeWidth:2,strokeColor:"#2a4a7a"}});
         }
         network.body.data.nodes.update(nodeUpdates);
         updateGraphVisuals();
