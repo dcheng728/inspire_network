@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import math
+import re
 import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,7 +43,7 @@ class PaperInfo:
 
         title = ""
         if titles := meta.get("titles"):
-            title = titles[0].get("title", "")
+            title = re.sub(r"<[^>]+/?>", "", titles[0].get("title", ""))
 
         author_entries = meta.get("authors", [])
         authors: list[str] = []
@@ -299,7 +301,7 @@ class CollabNetwork:
         graph_data_json = json.dumps({
             "decay": self.decay,
             "max_authors": self.max_authors,
-            "current_year": 2026,
+            "current_year": datetime.datetime.now().year,
             "network_bais": network_bais,
             "authors": authors_data,
             "edges": edges_data,
@@ -311,7 +313,10 @@ class CollabNetwork:
         for bai, adata in authors_data.items():
             node_wc[bai] = adata["weighted_citations"]
         max_wc = max(node_wc.values()) if node_wc else 1.0
-        max_log_wc = math.log1p(max_wc) if max_wc > 0 else 1.0
+        min_wc = min(node_wc.values()) if node_wc else 0.0
+        max_log_wc = math.log1p(max_wc)
+        min_log_wc = math.log1p(min_wc)
+        log_wc_range = max_log_wc - min_log_wc if max_log_wc > min_log_wc else 1.0
 
         intensities = [G[u][v]["weighted_citations"] for u, v in G.edges()]
         max_log = math.log1p(max(intensities)) if intensities else 1.0
@@ -331,50 +336,16 @@ class CollabNetwork:
 
         net = PyvisNetwork(
             height="100%", width="100%",
-            bgcolor="#ffffff", font_color="#ffffff",
+            bgcolor="#ffffff",
             heading="",
         )
         net.barnes_hut(
             gravity=-3000, central_gravity=0.5,
-            spring_length=100, spring_strength=0.06, damping=0.5,
+            spring_length=150, spring_strength=0.06, damping=0.5,
         )
 
-        for node in G.nodes():
-            wc = node_wc.get(node, 0)
-            t = math.log1p(wc) / max_log_wc if max_log_wc > 0 else 0
-            size = 30 + 35 * t
-            font_size = max(12, int(14 + 4 * t))
-            last_name = (
-                author_full_names.get(node, "")
-                .split(", ")[0]
-            ) or node
-            label = _hyphenate_label(last_name)
-            net.add_node(
-                node, label=label, shape="circle", size=size,
-                color={"background": "#4C72B0", "border": "#3a5a8c",
-                       "highlight": {"background": "#5c8fd6", "border": "#3a5a8c"}},
-                font={"size": font_size, "color": "#ffffff", "face": "arial",
-                       "multi": True, "strokeWidth": 2, "strokeColor": "#2a4a7a"},
-                title=f"{node}\nWeighted citations: {wc:.1f}",
-            )
-
-        def _edge_color(intensity: float) -> str:
-            t = math.log1p(intensity) / max_log if max_log > 0 else 0
-            t = min(t, 1.0)
-            r = int(204 - t * (204 - 26))
-            g = int(204 - t * (204 - 58))
-            b = int(204 - t * (204 - 107))
-            return f"#{r:02x}{g:02x}{b:02x}"
-
-        for u, v in G.edges():
-            d = G[u][v]
-            intensity = d["weighted_citations"]
-            log_w = math.log1p(intensity)
-            width = 1 + 8 * log_w / max_log
-            net.add_edge(
-                u, v, value=width,
-                color=_edge_color(intensity),
-            )
+        # Nodes and edges are added procedurally by JS from GRAPH_DATA
+        # (empty pyvis network — JS init populates it)
 
         # ── Header HTML ────────────────────────────────────────────────
         header_html = (
@@ -415,8 +386,11 @@ class CollabNetwork:
             '<div id="controls">'
             '<div id="author-section">'
             '<div id="author-tags"></div>'
-            '<input id="add-author-input" '
-            'placeholder="Add INSPIRE BAI (e.g. Edward.Witten.1)" />'
+            '<div id="author-search-wrap">'
+            '<input id="add-author-input" autocomplete="off" '
+            'placeholder="Search by name (e.g. Witten)" />'
+            '<div id="author-dropdown"></div>'
+            '</div>'
             '<button id="add-author-btn">Add</button>'
             '</div>'
             '<div id="lambda-section">'
@@ -437,7 +411,7 @@ class CollabNetwork:
             '<p style="font-size:16px;font-weight:600;color:#333;margin-bottom:12px">'
             'Collaboration Network</p>'
             '<p><b>Nodes</b> represent authors. '
-            'Size reflects the number of collaboration papers.</p>'
+            'Size reflects weighted citations.</p>'
             '<p><b>Edges</b> connect co-authors. '
             'Thickness and colour reflect the weighted citation score '
             'of their shared papers.</p>'
@@ -478,8 +452,23 @@ class CollabNetwork:
             'cursor:pointer;font-size:16px;padding:0 2px;opacity:.7;'
             'line-height:1}'
             '.author-tag button:hover{opacity:1}'
+            '#author-search-wrap{position:relative;display:inline-block}'
             '#add-author-input{padding:5px 10px;border:1px solid #ccc;'
-            'border-radius:4px;font-size:14px;width:260px;font-family:inherit}'
+            'border-radius:4px;font-size:14px;width:300px;font-family:inherit}'
+            '#author-dropdown{display:none;position:absolute;top:100%;left:0;'
+            'width:100%;min-width:360px;max-width:calc(100vw - 40px);'
+            'background:#fff;border:1px solid #ddd;'
+            'border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.15);'
+            'z-index:10000;max-height:320px;overflow-y:auto;margin-top:2px}'
+            '.author-option{padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0}'
+            '.author-option:last-child{border-bottom:none}'
+            '.author-option:hover,.author-option.active{background:#f0f4fa}'
+            '.author-option-name{font-size:14px;font-weight:600;color:#222}'
+            '.author-option-meta{font-size:12px;color:#888;margin-top:2px}'
+            '.author-option-bai{color:#4C72B0;font-family:monospace}'
+            '.author-dropdown-empty{padding:10px 12px;font-size:13px;color:#999;'
+            'font-style:italic}'
+            '.author-dropdown-loading{padding:10px 12px;font-size:13px;color:#888}'
             '#add-author-btn{padding:5px 14px;background:#4C72B0;color:#fff;'
             'border:none;border-radius:4px;cursor:pointer;font-size:14px;'
             'font-family:inherit}'
@@ -491,6 +480,13 @@ class CollabNetwork:
             'border-radius:4px;font-size:14px;text-align:center;font-family:inherit}'
             '#main-container{flex:1;min-height:0;display:flex}'
             '#graph-panel{flex:1;min-width:0;position:relative;overflow:hidden}'
+            '#zoom-controls{position:absolute;top:10px;left:10px;z-index:100;'
+            'display:flex;flex-direction:column;gap:4px}'
+            '.zoom-btn{width:32px;height:32px;border:1px solid #ccc;border-radius:4px;'
+            'background:#fff;font-size:18px;cursor:pointer;display:flex;'
+            'align-items:center;justify-content:center;color:#444;'
+            'box-shadow:0 1px 4px rgba(0,0,0,.1);line-height:1}'
+            '.zoom-btn:hover{background:#f0f4fa;border-color:#4C72B0;color:#4C72B0}'
             '#graph-panel .card{width:100%!important;height:100%!important;'
             'margin:0!important;border:none!important}'
             '#graph-panel .card-body,#graph-panel #mynetwork{width:100%!important;'
@@ -555,10 +551,12 @@ class CollabNetwork:
             'border-radius:4px;font-family:inherit}'
             '@media(max-width:768px){'
             '#main-container{flex-direction:column}'
+            '#graph-panel{min-height:50vh}'
             '#info-panel{width:100%!important;min-width:0!important;'
             'max-height:50vh;border-left:none;border-top:1px solid #ddd}'
             '#resize-handle{display:none}'
-            '#add-author-input{width:140px}'
+            '#add-author-input{width:180px}'
+            '#author-dropdown{min-width:0}'
             '}'
             '</style>'
         )
@@ -572,6 +570,8 @@ var currentInfoType = null;
 var currentInfoId = null;
 var navHistory = [];
 var currentPapers = [];
+var userHasZoomed = false;
+var addingAuthor = false;
 
 // ── Utilities ──────────────────────────────────────
 function paperAge(d) {
@@ -654,9 +654,25 @@ function hyphenateLabel(name, maxLen) {
     return name.substring(0, mid) + "-\n" + name.substring(mid);
 }
 
-function computeNodeSizeFont(wc, maxLogWC) {
-    var t = maxLogWC > 0 ? Math.log1p(wc) / maxLogWC : 0;
-    return {size: 30 + 35 * t, fontSize: Math.max(12, Math.floor(14 + 4 * t))};
+function computeNodeSizeFont(wc, minLogWC, logWCRange) {
+    var t = logWCRange > 0 ? (Math.log1p(wc) - minLogWC) / logWCRange : 0;
+    return {margin: Math.floor(5 + 25 * t), fontSize: Math.max(11, Math.floor(13 + 5 * t))};
+}
+
+function getNodeWCRange() {
+    var authors = GRAPH_DATA.authors;
+    var bais = Object.keys(authors);
+    var maxWC = 0, minWC = Infinity;
+    for (var i=0;i<bais.length;i++) {
+        var wc = authors[bais[i]].weighted_citations;
+        if (wc > maxWC) maxWC = wc;
+        if (wc < minWC) minWC = wc;
+    }
+    if (minWC === Infinity) minWC = 0;
+    var maxLogWC = Math.log1p(maxWC);
+    var minLogWC = Math.log1p(minWC);
+    var logWCRange = maxLogWC > minLogWC ? maxLogWC - minLogWC : 1;
+    return {minLogWC: minLogWC, logWCRange: logWCRange};
 }
 
 function updateGraphVisuals() {
@@ -664,16 +680,12 @@ function updateGraphVisuals() {
     var nodeDS = network.body.data.nodes;
     var authors = GRAPH_DATA.authors;
     var bais = Object.keys(authors);
-    var maxWC = 0;
-    for (var i=0;i<bais.length;i++) {
-        if (authors[bais[i]].weighted_citations > maxWC) maxWC = authors[bais[i]].weighted_citations;
-    }
-    var maxLogWC = Math.log1p(maxWC);
+    var wcr = getNodeWCRange();
     var nodeUpdates = [];
     for (var i=0;i<bais.length;i++) {
         var b = bais[i];
-        var sf = computeNodeSizeFont(authors[b].weighted_citations, maxLogWC);
-        nodeUpdates.push({id:b, size:sf.size,
+        var sf = computeNodeSizeFont(authors[b].weighted_citations, wcr.minLogWC, wcr.logWCRange);
+        nodeUpdates.push({id:b, margin:sf.margin,
             font:{size:sf.fontSize, color:"#ffffff", face:"arial", multi:true, strokeWidth:2, strokeColor:"#2a4a7a"}});
     }
     nodeDS.update(nodeUpdates);
@@ -756,6 +768,99 @@ async function fetchAuthorPapers(bai) {
     return all;
 }
 
+// ── Author search autocomplete ───────────────────
+var searchTimer = null;
+var searchAbort = null;
+var dropdownIndex = -1;
+var dropdownResults = [];
+
+async function searchAuthors(query) {
+    if (searchAbort) searchAbort.abort();
+    var controller = new AbortController();
+    searchAbort = controller;
+    var dropdown = document.getElementById("author-dropdown");
+    dropdown.innerHTML = '<div class="author-dropdown-loading">Searching...</div>';
+    dropdown.style.display = "block";
+    try {
+        var params = new URLSearchParams({q:query, size:"8",
+            fields:"ids,name,positions,advisors"});
+        var resp = await fetch("https://inspirehep.net/api/authors?"+params,
+            {signal:controller.signal});
+        if (!resp.ok) throw new Error("API error");
+        var data = await resp.json();
+        var hits = (data.hits||{}).hits||[];
+        dropdownResults = [];
+        dropdownIndex = -1;
+        if (!hits.length) {
+            dropdown.innerHTML = '<div class="author-dropdown-empty">No authors found</div>';
+            return;
+        }
+        var html = "";
+        for (var i=0;i<hits.length;i++) {
+            var m = hits[i].metadata||{};
+            var name = (m.name||{}).preferred_name || (m.name||{}).value || "";
+            var bai = "";
+            var ids = m.ids||[];
+            for (var j=0;j<ids.length;j++) {
+                if (ids[j].schema === "INSPIRE BAI") { bai = ids[j].value; break; }
+            }
+            if (!bai) continue;
+            var inst = "";
+            var positions = m.positions||[];
+            for (var j=0;j<positions.length;j++) {
+                if (positions[j].current) { inst = positions[j].institution||""; break; }
+            }
+            if (!inst && positions.length) inst = positions[0].institution||"";
+            var already = GRAPH_DATA.authors[bai] ? " (already added)" : "";
+            dropdownResults.push({bai:bai, name:name, institution:inst});
+            html += '<div class="author-option" data-index="'+dropdownResults.length+'" data-bai="'+esc(bai)+'">'
+                + '<div class="author-option-name">'+esc(name)+already+'</div>'
+                + '<div class="author-option-meta">'
+                + '<span class="author-option-bai">'+esc(bai)+'</span>'
+                + (inst ? ' &middot; '+esc(inst) : '')
+                + '</div></div>';
+        }
+        dropdown.innerHTML = html || '<div class="author-dropdown-empty">No authors found</div>';
+        var options = dropdown.querySelectorAll(".author-option");
+        for (var i=0;i<options.length;i++) {
+            (function(opt){
+                opt.addEventListener("mousedown", function(e) {
+                    e.preventDefault();
+                    selectDropdownAuthor(opt.getAttribute("data-bai"));
+                });
+            })(options[i]);
+        }
+    } catch(e) {
+        if (e.name !== "AbortError") {
+            dropdown.innerHTML = '<div class="author-dropdown-empty">Search failed</div>';
+        }
+    }
+}
+
+function selectDropdownAuthor(bai) {
+    var input = document.getElementById("add-author-input");
+    var dropdown = document.getElementById("author-dropdown");
+    input.value = bai;
+    dropdown.style.display = "none";
+    dropdownResults = [];
+    dropdownIndex = -1;
+    addAuthor(bai);
+    input.value = "";
+}
+
+function navigateDropdown(dir) {
+    var dropdown = document.getElementById("author-dropdown");
+    var options = dropdown.querySelectorAll(".author-option");
+    if (!options.length) return;
+    if (dropdownIndex >= 0 && dropdownIndex < options.length)
+        options[dropdownIndex].classList.remove("active");
+    dropdownIndex += dir;
+    if (dropdownIndex < 0) dropdownIndex = options.length - 1;
+    if (dropdownIndex >= options.length) dropdownIndex = 0;
+    options[dropdownIndex].classList.add("active");
+    options[dropdownIndex].scrollIntoView({block:"nearest"});
+}
+
 function updateNetworkBais() {
     var baiToRecids = {};
     var akeys = Object.keys(GRAPH_DATA.authors);
@@ -781,7 +886,9 @@ function updateNetworkBais() {
 async function addAuthor(bai) {
     bai = bai.trim();
     if (!bai) return;
+    if (addingAuthor) return;
     if (GRAPH_DATA.authors[bai]) { alert(bai+" is already in the network."); return; }
+    addingAuthor = true;
     var btn = document.getElementById("add-author-btn");
     var input = document.getElementById("add-author-input");
     btn.disabled = true; btn.textContent = "Fetching...";
@@ -837,38 +944,41 @@ async function addAuthor(bai) {
             }
         }
         updateNetworkBais();
-
-        // Add vis.js node with size based on weighted citations
-        var maxWC = 0;
-        var allBais = Object.keys(GRAPH_DATA.authors);
-        for (var ai=0;ai<allBais.length;ai++) {
-            if (GRAPH_DATA.authors[allBais[ai]].weighted_citations > maxWC) maxWC = GRAPH_DATA.authors[allBais[ai]].weighted_citations;
-        }
-        var maxLogWC = Math.log1p(maxWC);
-        var sf = computeNodeSizeFont(totalWC, maxLogWC);
-        var nodeColor = {background:"#4C72B0",border:"#3a5a8c",highlight:{background:"#5c8fd6",border:"#3a5a8c"}};
-        var nodeFont = {size:sf.fontSize,color:"#ffffff",face:"arial",multi:true,strokeWidth:2,strokeColor:"#2a4a7a"};
-        var nodeLabel = hyphenateLabel(lastName||bai);
-        nodeDS.add({id:bai, label:nodeLabel, shape:"circle", size:sf.size,
-            color:nodeColor, font:nodeFont, title:bai+"\nWeighted citations: "+totalWC.toFixed(1)
-        });
-        // Add vis.js edges
-        var maxLog = getMaxLog();
-        var ekeys = Object.keys(GRAPH_DATA.edges);
-        for (var i=0;i<ekeys.length;i++) {
-            var e = GRAPH_DATA.edges[ekeys[i]];
-            if (e.author_a === bai || e.author_b === bai) {
-                var logW = Math.log1p(e.weighted_citations);
-                edgeDS.add({from:e.author_a, to:e.author_b, value:1+8*logW/maxLog,
-                    color:edgeColor(e.weighted_citations, maxLog)
-                });
-            }
-        }
+        addAuthorToVis(bai);
         updateGraphVisuals();
         renderAuthorTags();
         input.value = "";
     } catch(e) { alert("Error fetching "+bai+": "+e.message); }
-    finally { btn.disabled = false; btn.textContent = "Add"; }
+    finally { addingAuthor = false; btn.disabled = false; btn.textContent = "Add"; }
+}
+
+function addAuthorToVis(bai) {
+    var data = GRAPH_DATA.authors[bai];
+    if (!data) return;
+    var nodeDS = network.body.data.nodes;
+    var edgeDS = network.body.data.edges;
+    var wcr = getNodeWCRange();
+    var sf = computeNodeSizeFont(data.weighted_citations, wcr.minLogWC, wcr.logWCRange);
+    var nodeColor = {background:"#4C72B0",border:"#3a5a8c",highlight:{background:"#5c8fd6",border:"#3a5a8c"}};
+    var nodeFont = {size:sf.fontSize,color:"#ffffff",face:"arial",multi:true,strokeWidth:2,strokeColor:"#2a4a7a"};
+    var lastName = data.last_name || data.full_name || bai;
+    var nodeLabel = hyphenateLabel(lastName);
+    nodeDS.add({id:bai, label:nodeLabel, shape:"circle", margin:sf.margin,
+        color:nodeColor, font:nodeFont, title:bai+"\nWeighted citations: "+data.weighted_citations.toFixed(1)
+    });
+    var maxLog = getMaxLog();
+    var ekeys = Object.keys(GRAPH_DATA.edges);
+    for (var i=0;i<ekeys.length;i++) {
+        var e = GRAPH_DATA.edges[ekeys[i]];
+        if (e.author_a === bai || e.author_b === bai) {
+            var otherBai = e.author_a === bai ? e.author_b : e.author_a;
+            if (!nodeDS.get(otherBai)) continue;
+            var logW = Math.log1p(e.weighted_citations);
+            edgeDS.add({from:e.author_a, to:e.author_b, value:1+8*logW/maxLog,
+                color:edgeColor(e.weighted_citations, maxLog)
+            });
+        }
+    }
 }
 
 function removeAuthor(bai) {
@@ -893,7 +1003,7 @@ function clearInfoPanel() {
     document.getElementById("info-content").innerHTML =
         '<div class="welcome-msg">'
         +'<p style="font-size:16px;font-weight:600;color:#333;margin-bottom:12px">Collaboration Network</p>'
-        +'<p><b>Nodes</b> represent authors. Size reflects the number of collaboration papers.</p>'
+        +'<p><b>Nodes</b> represent authors. Size reflects weighted citations.</p>'
         +'<p><b>Edges</b> connect co-authors. Thickness and colour reflect the weighted citation score of their shared papers.</p>'
         +'<p style="margin-top:16px"><b>How to explore:</b></p>'
         +'<ul style="margin:4px 0 0 0;padding-left:20px"><li>Click a node to see an author\'s papers and categories</li>'
@@ -1097,7 +1207,15 @@ function renderPapers(papers, sortBy) {
 (function init() {
     if (typeof network === "undefined") { setTimeout(init, 100); return; }
     network.setOptions({interaction:{zoomView:false, hover:true, tooltipDelay:200}});
-    function fitNetwork() {
+    // Populate network from pre-fetched GRAPH_DATA
+    var initBais = GRAPH_DATA.network_bais.slice();
+    for (var i=0;i<initBais.length;i++) {
+        addAuthorToVis(initBais[i]);
+    }
+    updateGraphVisuals();
+    renderAuthorTags();
+    function fitNetwork(force) {
+        if (!force && userHasZoomed) return;
         network.fit({animation:{duration:400,easingFunction:"easeInOutQuad"},maxZoomLevel:2.0,
                      minZoomLevel:0.3, nodes:network.body.data.nodes.getIds(),
                      padding:40});
@@ -1105,17 +1223,18 @@ function renderPapers(papers, sortBy) {
     // Fit after stabilization completes, with repeated calls to catch late layout shifts
     network.once("stabilizationIterationsDone", function() {
         fitNetwork();
-        setTimeout(fitNetwork, 500);
-        setTimeout(fitNetwork, 1500);
+        setTimeout(function(){ fitNetwork(); }, 500);
+        setTimeout(function(){ fitNetwork(); }, 1500);
     });
     network.once("stabilized", function() {
         fitNetwork();
     });
-    window.addEventListener("resize", function() { fitNetwork(); });
+    window.addEventListener("resize", function() { fitNetwork(true); });
     var container = document.getElementById("mynetwork");
     if (container) {
         container.addEventListener("wheel", function(e) {
             e.preventDefault(); e.stopPropagation();
+            userHasZoomed = true;
             var scale = network.getScale();
             var delta = e.deltaY > 0 ? -0.015 : 0.015;
             network.moveTo({scale:scale*(1+delta), position:network.getViewPosition()});
@@ -1144,7 +1263,7 @@ function renderPapers(papers, sortBy) {
                 nodeUpdates.push({id:n.id,
                     color:{background:"#9ab2d4",border:"#8aa0c0",
                            highlight:{background:"#9ab2d4",border:"#8aa0c0"}},
-                    font:{color:"rgba(255,255,255,0.6)",size:(n.font?n.font.size:16),face:"arial",multi:true,strokeWidth:1,strokeColor:"#7a94b8"}});
+                    font:{color:"rgba(255,255,255,0.6)",size:(n.font?n.font.size:14),face:"arial",multi:true,strokeWidth:1,strokeColor:"#7a94b8"}});
             }
         }
         network.body.data.nodes.update(nodeUpdates);
@@ -1167,7 +1286,7 @@ function renderPapers(papers, sortBy) {
             nodeUpdates.push({id:n.id,
                 color:{background:"#4C72B0",border:"#3a5a8c",
                        highlight:{background:"#5c8fd6",border:"#3a5a8c"}},
-                font:{color:"#ffffff",size:(n.font?n.font.size:16),face:"arial",
+                font:{color:"#ffffff",size:(n.font?n.font.size:14),face:"arial",
                       multi:true,strokeWidth:2,strokeColor:"#2a4a7a"}});
         }
         network.body.data.nodes.update(nodeUpdates);
@@ -1211,11 +1330,34 @@ function renderPapers(papers, sortBy) {
         GRAPH_DATA.decay = v;
         recomputeAllWeights(); updateGraphVisuals(); refreshInfoPanel();
     });
+    var authorInput = document.getElementById("add-author-input");
+    var authorDropdown = document.getElementById("author-dropdown");
     document.getElementById("add-author-btn").addEventListener("click", function() {
-        addAuthor(document.getElementById("add-author-input").value);
+        var v = authorInput.value.trim();
+        if (v) { addAuthor(v); authorInput.value = ""; authorDropdown.style.display = "none"; }
     });
-    document.getElementById("add-author-input").addEventListener("keydown", function(e) {
-        if (e.key==="Enter") addAuthor(this.value);
+    authorInput.addEventListener("input", function() {
+        var q = this.value.trim();
+        clearTimeout(searchTimer);
+        if (q.length < 2) { authorDropdown.style.display = "none"; return; }
+        searchTimer = setTimeout(function(){ searchAuthors(q); }, 300);
+    });
+    authorInput.addEventListener("keydown", function(e) {
+        if (e.key === "ArrowDown") { e.preventDefault(); navigateDropdown(1); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); navigateDropdown(-1); }
+        else if (e.key === "Enter") {
+            e.preventDefault();
+            var options = authorDropdown.querySelectorAll(".author-option");
+            if (dropdownIndex >= 0 && dropdownIndex < options.length) {
+                selectDropdownAuthor(options[dropdownIndex].getAttribute("data-bai"));
+            } else if (this.value.trim()) {
+                addAuthor(this.value.trim()); this.value = ""; authorDropdown.style.display = "none";
+            }
+        } else if (e.key === "Escape") { authorDropdown.style.display = "none"; }
+    });
+    authorInput.addEventListener("blur", function() {
+        clearTimeout(searchTimer);
+        setTimeout(function(){ authorDropdown.style.display = "none"; }, 200);
     });
 
     // Formula explanation toggle
@@ -1226,6 +1368,22 @@ function renderPapers(papers, sortBy) {
             explDiv.style.display = explDiv.style.display === "none" ? "block" : "none";
         });
     }
+
+    // ── Zoom controls ────────────────────────────────
+    document.getElementById("zoom-in").addEventListener("click", function() {
+        userHasZoomed = true;
+        var scale = network.getScale();
+        network.moveTo({scale:scale*1.3, animation:{duration:200,easingFunction:"easeInOutQuad"}});
+    });
+    document.getElementById("zoom-out").addEventListener("click", function() {
+        userHasZoomed = true;
+        var scale = network.getScale();
+        network.moveTo({scale:scale/1.3, animation:{duration:200,easingFunction:"easeInOutQuad"}});
+    });
+    document.getElementById("zoom-fit").addEventListener("click", function() {
+        userHasZoomed = false;
+        fitNetwork(true);
+    });
 
     // ── Controls toggle ─────────────────────────────
     var ctrlToggle = document.getElementById("controls-toggle");
@@ -1311,7 +1469,12 @@ function renderPapers(papers, sortBy) {
             f'</div>\n'
             f"{controls_html}\n"
             f'<div id="main-container">\n'
-            f'<div id="graph-panel">\n',
+            f'<div id="graph-panel">\n'
+            f'<div id="zoom-controls">'
+            f'<button class="zoom-btn" id="zoom-in" title="Zoom in">+</button>'
+            f'<button class="zoom-btn" id="zoom-out" title="Zoom out">&minus;</button>'
+            f'<button class="zoom-btn" id="zoom-fit" title="Fit to view">&#8214;</button>'
+            f'</div>\n',
             1,
         )
         html = html.replace(
@@ -1330,8 +1493,10 @@ function renderPapers(papers, sortBy) {
             webbrowser.open("file://" + os.path.abspath(save_path))
 
 
-def _paper_age_years(date_str: str | None, current_year: int = 2026) -> float:
+def _paper_age_years(date_str: str | None, current_year: int | None = None) -> float:
     """Return the age of a paper in years (floored to 0)."""
+    if current_year is None:
+        current_year = datetime.datetime.now().year
     if not date_str:
         return 30.0  # unknown date -> treat as old
     try:
