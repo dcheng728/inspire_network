@@ -306,18 +306,28 @@ class CollabNetwork:
         }).replace("</", "<\\/")
 
         # ── Build pyvis graph ───────────────────────────────────────────
-        node_papers: dict[str, int] = {}
-        for e in self.edges:
-            node_papers[e.author_a] = (
-                node_papers.get(e.author_a, 0) + e.num_papers
-            )
-            node_papers[e.author_b] = (
-                node_papers.get(e.author_b, 0) + e.num_papers
-            )
-        max_np = max(node_papers.values()) if node_papers else 1
+        # Node sizes based on total weighted citations per author
+        node_wc: dict[str, float] = {}
+        for bai, adata in authors_data.items():
+            node_wc[bai] = adata["weighted_citations"]
+        max_wc = max(node_wc.values()) if node_wc else 1.0
+        max_log_wc = math.log1p(max_wc) if max_wc > 0 else 1.0
 
         intensities = [G[u][v]["weighted_citations"] for u, v in G.edges()]
         max_log = math.log1p(max(intensities)) if intensities else 1.0
+
+        def _hyphenate_label(name: str, max_len: int = 9) -> str:
+            """Break long names with a hyphen for better node fit."""
+            if len(name) <= max_len:
+                return name
+            # Try to break at a natural point (space, hyphen)
+            mid = len(name) // 2
+            for offset in range(mid):
+                for pos in [mid + offset, mid - offset]:
+                    if 0 < pos < len(name) and name[pos] in " -":
+                        return name[:pos + 1] + "\n" + name[pos + 1:]
+            # Force break with hyphen
+            return name[:mid] + "-\n" + name[mid:]
 
         net = PyvisNetwork(
             height="100%", width="100%",
@@ -330,21 +340,22 @@ class CollabNetwork:
         )
 
         for node in G.nodes():
-            np_count = node_papers.get(node, 0)
-            t = np_count / max_np if max_np else 0
-            size = 35 + 40 * t
-            font_size = max(14, int(16 + 6 * t))
-            label = (
+            wc = node_wc.get(node, 0)
+            t = math.log1p(wc) / max_log_wc if max_log_wc > 0 else 0
+            size = 30 + 35 * t
+            font_size = max(12, int(14 + 4 * t))
+            last_name = (
                 author_full_names.get(node, "")
-                .split(", ")[0]  # last name from "Last, First"
+                .split(", ")[0]
             ) or node
+            label = _hyphenate_label(last_name)
             net.add_node(
                 node, label=label, shape="circle", size=size,
                 color={"background": "#4C72B0", "border": "#3a5a8c",
                        "highlight": {"background": "#5c8fd6", "border": "#3a5a8c"}},
                 font={"size": font_size, "color": "#ffffff", "face": "arial",
-                       "strokeWidth": 2, "strokeColor": "#2a4a7a"},
-                title=f"{node}\nCollab papers: {np_count}",
+                       "multi": True, "strokeWidth": 2, "strokeColor": "#2a4a7a"},
+                title=f"{node}\nWeighted citations: {wc:.1f}",
             )
 
         def _edge_color(intensity: float) -> str:
@@ -627,7 +638,47 @@ function recomputeAllWeights() {
     }
 }
 
+function hyphenateLabel(name, maxLen) {
+    maxLen = maxLen || 9;
+    if (name.length <= maxLen) return name;
+    var mid = Math.floor(name.length / 2);
+    for (var off=0; off<mid; off++) {
+        var positions = [mid+off, mid-off];
+        for (var pi=0; pi<positions.length; pi++) {
+            var pos = positions[pi];
+            if (pos > 0 && pos < name.length && (name[pos]===" "||name[pos]==="-")) {
+                return name.substring(0, pos+1) + "\n" + name.substring(pos+1);
+            }
+        }
+    }
+    return name.substring(0, mid) + "-\n" + name.substring(mid);
+}
+
+function computeNodeSizeFont(wc, maxLogWC) {
+    var t = maxLogWC > 0 ? Math.log1p(wc) / maxLogWC : 0;
+    return {size: 30 + 35 * t, fontSize: Math.max(12, Math.floor(14 + 4 * t))};
+}
+
 function updateGraphVisuals() {
+    // Recompute node sizes based on weighted citations
+    var nodeDS = network.body.data.nodes;
+    var authors = GRAPH_DATA.authors;
+    var bais = Object.keys(authors);
+    var maxWC = 0;
+    for (var i=0;i<bais.length;i++) {
+        if (authors[bais[i]].weighted_citations > maxWC) maxWC = authors[bais[i]].weighted_citations;
+    }
+    var maxLogWC = Math.log1p(maxWC);
+    var nodeUpdates = [];
+    for (var i=0;i<bais.length;i++) {
+        var b = bais[i];
+        var sf = computeNodeSizeFont(authors[b].weighted_citations, maxLogWC);
+        nodeUpdates.push({id:b, size:sf.size,
+            font:{size:sf.fontSize, color:"#ffffff", face:"arial", multi:true, strokeWidth:2, strokeColor:"#2a4a7a"}});
+    }
+    nodeDS.update(nodeUpdates);
+
+    // Update edges
     var maxLog = getMaxLog();
     var edgeDS = network.body.data.edges;
     var all = edgeDS.get();
@@ -787,11 +838,19 @@ async function addAuthor(bai) {
         }
         updateNetworkBais();
 
-        // Add vis.js node
+        // Add vis.js node with size based on weighted citations
+        var maxWC = 0;
+        var allBais = Object.keys(GRAPH_DATA.authors);
+        for (var ai=0;ai<allBais.length;ai++) {
+            if (GRAPH_DATA.authors[allBais[ai]].weighted_citations > maxWC) maxWC = GRAPH_DATA.authors[allBais[ai]].weighted_citations;
+        }
+        var maxLogWC = Math.log1p(maxWC);
+        var sf = computeNodeSizeFont(totalWC, maxLogWC);
         var nodeColor = {background:"#4C72B0",border:"#3a5a8c",highlight:{background:"#5c8fd6",border:"#3a5a8c"}};
-        var nodeFont = {size:16,color:"#ffffff",face:"arial",strokeWidth:2,strokeColor:"#2a4a7a"};
-        nodeDS.add({id:bai, label:lastName||bai, shape:"circle", size:35,
-            color:nodeColor, font:nodeFont, title:bai
+        var nodeFont = {size:sf.fontSize,color:"#ffffff",face:"arial",multi:true,strokeWidth:2,strokeColor:"#2a4a7a"};
+        var nodeLabel = hyphenateLabel(lastName||bai);
+        nodeDS.add({id:bai, label:nodeLabel, shape:"circle", size:sf.size,
+            color:nodeColor, font:nodeFont, title:bai+"\nWeighted citations: "+totalWC.toFixed(1)
         });
         // Add vis.js edges
         var maxLog = getMaxLog();
@@ -1039,13 +1098,18 @@ function renderPapers(papers, sortBy) {
     if (typeof network === "undefined") { setTimeout(init, 100); return; }
     network.setOptions({interaction:{zoomView:false, hover:true, tooltipDelay:200}});
     function fitNetwork() {
-        var padding = 40;
         network.fit({animation:{duration:400,easingFunction:"easeInOutQuad"},maxZoomLevel:2.0,
                      minZoomLevel:0.3, nodes:network.body.data.nodes.getIds(),
-                     padding:padding});
+                     padding:40});
     }
+    // Fit after stabilization completes, with repeated calls to catch late layout shifts
     network.once("stabilizationIterationsDone", function() {
-        setTimeout(fitNetwork, 300);
+        fitNetwork();
+        setTimeout(fitNetwork, 500);
+        setTimeout(fitNetwork, 1500);
+    });
+    network.once("stabilized", function() {
+        fitNetwork();
     });
     window.addEventListener("resize", function() { fitNetwork(); });
     var container = document.getElementById("mynetwork");
@@ -1078,9 +1142,9 @@ function renderPapers(papers, sortBy) {
             var n = allNodes[i];
             if (!connSet[n.id]) {
                 nodeUpdates.push({id:n.id,
-                    color:{background:"#d0d0d0",border:"#bbb",
-                           highlight:{background:"#d0d0d0",border:"#bbb"}},
-                    font:{color:"#999",size:(n.font?n.font.size:16),face:"arial",strokeWidth:0}});
+                    color:{background:"#9ab2d4",border:"#8aa0c0",
+                           highlight:{background:"#9ab2d4",border:"#8aa0c0"}},
+                    font:{color:"rgba(255,255,255,0.6)",size:(n.font?n.font.size:16),face:"arial",multi:true,strokeWidth:1,strokeColor:"#7a94b8"}});
             }
         }
         network.body.data.nodes.update(nodeUpdates);
@@ -1089,7 +1153,7 @@ function renderPapers(papers, sortBy) {
         for (var i=0;i<allEdges.length;i++) {
             var e = allEdges[i];
             if (!connSet[e.from] || !connSet[e.to]) {
-                edgeUpdates.push({id:e.id, color:{color:"#eee",opacity:0.3}});
+                edgeUpdates.push({id:e.id, color:{color:"#ddd",opacity:0.5}});
             }
         }
         network.body.data.edges.update(edgeUpdates);
@@ -1104,7 +1168,7 @@ function renderPapers(papers, sortBy) {
                 color:{background:"#4C72B0",border:"#3a5a8c",
                        highlight:{background:"#5c8fd6",border:"#3a5a8c"}},
                 font:{color:"#ffffff",size:(n.font?n.font.size:16),face:"arial",
-                      strokeWidth:2,strokeColor:"#2a4a7a"}});
+                      multi:true,strokeWidth:2,strokeColor:"#2a4a7a"}});
         }
         network.body.data.nodes.update(nodeUpdates);
         updateGraphVisuals();
