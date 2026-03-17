@@ -19,12 +19,12 @@ dependencies = [
 dev = ["pytest>=7.0", "ruff>=0.1"]
 
 [project.scripts]
-inspire-papers = "inspire_tools.cli:papers_main"
-inspire-categories = "inspire_tools.cli:categories_main"
-inspire-collab = "inspire_tools.cli:collab_main"
+inspire-papers = "inspire_network.cli:papers_main"
+inspire-categories = "inspire_network.cli:categories_main"
+inspire-collab = "inspire_network.cli:collab_main"
 
 [tool.setuptools.packages.find]
-include = ["inspire_tools*"]
+include = ["inspire_network*"]
 
 [tool.ruff]
 line-length = 100

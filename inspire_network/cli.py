@@ -21,7 +21,7 @@ def papers_main(argv: list[str] | None = None) -> None:
     parser.add_argument("--json", dest="as_json", action="store_true", help="Output as JSON")
     args = parser.parse_args(argv)
 
-    from inspire_tools.analysis import get_author_papers
+    from inspire_network.analysis import get_author_papers
 
     papers = get_author_papers(args.author_id, max_authors=args.max_authors)
 
@@ -54,7 +54,7 @@ def categories_main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    from inspire_tools.analysis import count_arxiv_categories
+    from inspire_network.analysis import count_arxiv_categories
 
     counts = count_arxiv_categories(args.author_id, max_authors=args.max_authors)
 
@@ -90,7 +90,7 @@ def collab_main(argv: list[str] | None = None) -> None:
     if len(args.author_ids) < 2:
         parser.error("Need at least 2 author IDs to build a network.")
 
-    from inspire_tools.analysis import build_collaboration_network
+    from inspire_network.analysis import build_collaboration_network
 
     net = build_collaboration_network(
         args.author_ids,

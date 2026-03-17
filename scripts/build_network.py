@@ -1,9 +1,9 @@
-"""Sample script demonstrating inspire-tools usage."""
+"""Build the collaboration network and write the interactive HTML page."""
 
 # I = Sum_i c_i * exp(-lambda * age_i)
 decay = 0.2       # lambda: slower decay means older papers stay relevant
 
-from inspire_tools import (
+from inspire_network import (
     InspireClient,
     get_author_papers,
     count_arxiv_categories,
@@ -47,10 +47,15 @@ imperial_authors = ["Arkady.A.Tseytlin.1",
                     "Toby.Wiseman.1",
                     ]
 
-other_authors = ["Edward.Witten.1",
-                 "Stephen.W.Hawking.1",]
+other_authors = [
+    "G.tHooft.1",
+    "M.J.G.Veltman.1",
+    "Edward.Witten.1",
+    "Stephen.W.Hawking.1",
+    "G.W.Gibbons.1",
+]
 
-authors = imperial_authors + other_authors
+authors = other_authors
 print(f"\n=== Collaboration network: {authors} ===\n")
 
 net = build_collaboration_network(
@@ -60,5 +65,5 @@ net = build_collaboration_network(
 )
 print(net.summary())
 
-# Visualize the network
-net.plot(save_path="examples/collab_network.html")
+# Visualize the network — output to docs/ for GitHub Pages
+net.plot(save_path="docs/index.html")

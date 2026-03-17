@@ -12,7 +12,7 @@ from itertools import combinations
 
 import networkx as nx
 
-from inspire_tools.client import InspireClient
+from inspire_network.client import InspireClient
 
 
 # ======================================================================
@@ -165,6 +165,7 @@ class CollabNetwork:
     author_papers: dict[str, dict[str, PaperInfo]] = field(
         default_factory=dict, repr=False,
     )
+    author_order: list[str] = field(default_factory=list)
 
     def formula_str(self) -> str:
         return f"W = Sum_i[ c_i * exp(-lambda * age_i) ],  lambda={self.decay}"
@@ -204,7 +205,28 @@ class CollabNetwork:
         save_path = save_path or "collab_network.html"
 
         # ── Prepare data for embedding as JSON ──────────────────────────
-        network_bais = sorted(self.author_papers.keys())
+        # Preserve insertion order; fall back to dict key order
+        network_bais = (
+            self.author_order
+            if self.author_order
+            else list(self.author_papers.keys())
+        )
+
+        # Extract full name for each BAI from their papers
+        author_full_names: dict[str, str] = {}
+        for bai, papers_dict in self.author_papers.items():
+            for p in papers_dict.values():
+                for i, ab in enumerate(p.author_bais):
+                    if ab == bai and i < len(p.authors):
+                        author_full_names[bai] = p.authors[i]
+                        break
+                if bai in author_full_names:
+                    break
+
+        def _last_name(full_name: str) -> str:
+            """Extract last name from INSPIRE 'Last, First' format."""
+            comma = full_name.find(", ")
+            return full_name[:comma] if comma >= 0 else full_name
 
         paper_network_bais: dict[str, set[str]] = {}
         for bai, papers_dict in self.author_papers.items():
@@ -248,11 +270,14 @@ class CollabNetwork:
                 {"category": c, "count": n} for c, n in cat_counter.most_common()
             ]
             total_wc = _weighted_citations_for_papers(papers, self.decay)
+            full_name = author_full_names.get(bai, "")
             authors_data[bai] = {
                 "num_papers": len(papers),
                 "weighted_citations": round(total_wc, 4),
                 "categories": categories,
                 "papers": [_paper_json(p) for p in papers],
+                "full_name": full_name,
+                "last_name": _last_name(full_name) if full_name else "",
             }
 
         edges_data: dict[str, dict] = {}
@@ -300,25 +325,25 @@ class CollabNetwork:
             heading="",
         )
         net.barnes_hut(
-            gravity=-5000, central_gravity=0.3,
-            spring_length=120, spring_strength=0.04, damping=0.5,
+            gravity=-3000, central_gravity=0.5,
+            spring_length=100, spring_strength=0.06, damping=0.5,
         )
-
-        def _short_bai(bai: str) -> str:
-            parts = bai.rsplit(".", 2)
-            return ".".join(parts[-2:]) if len(parts) >= 2 else bai
 
         for node in G.nodes():
             np_count = node_papers.get(node, 0)
             t = np_count / max_np if max_np else 0
             size = 35 + 40 * t
-            font_size = max(11, int(13 + 6 * t))
+            font_size = max(14, int(16 + 6 * t))
+            label = (
+                author_full_names.get(node, "")
+                .split(", ")[0]  # last name from "Last, First"
+            ) or node
             net.add_node(
-                node, label=_short_bai(node), shape="circle", size=size,
+                node, label=label, shape="circle", size=size,
                 color={"background": "#4C72B0", "border": "#3a5a8c",
                        "highlight": {"background": "#5c8fd6", "border": "#3a5a8c"}},
                 font={"size": font_size, "color": "#ffffff", "face": "arial",
-                       "strokeWidth": 0},
+                       "strokeWidth": 2, "strokeColor": "#2a4a7a"},
                 title=f"{node}\nCollab papers: {np_count}",
             )
 
@@ -356,7 +381,26 @@ class CollabNetwork:
             '<i>W</i> = &Sigma;<sub>i</sub> '
             'c<sub>i</sub> &middot; '
             'e<sup>&minus;&lambda;&middot;age<sub>i</sub></sup>'
+            '<span id="formula-help" style="cursor:pointer;margin-left:6px;'
+            'color:#888;font-size:12px;border:1px solid #ccc;border-radius:50%;'
+            'display:inline-block;width:16px;height:16px;text-align:center;'
+            'line-height:16px" title="Click for explanation">?</span>'
             '</div>'
+            '</div>'
+            '<div id="formula-explanation" style="display:none;font-size:12px;'
+            'color:#555;line-height:1.6;margin-top:6px;padding:8px 12px;'
+            'background:#f9f9f9;border-radius:4px;border:1px solid #eee">'
+            'The <b>weighted citation score</b> (<i>W</i>) measures the strength '
+            'of collaboration between two authors. For each co-authored paper '
+            '<i>i</i>, the paper\'s citation count <i>c<sub>i</sub></i> is '
+            'multiplied by an exponential decay factor '
+            '<i>e<sup>&minus;&lambda;&middot;age<sub>i</sub></sup></i>, '
+            'where <i>age<sub>i</sub></i> is the number of years since '
+            'publication and <i>&lambda;</i> (lambda) controls how quickly '
+            'older papers lose weight. '
+            'A higher &lambda; emphasises recent work; &lambda;=0 treats all '
+            'papers equally regardless of age. '
+            'The edge score is the sum over all shared papers between the pair.'
             '</div>'
             '</div>'
         )
@@ -373,9 +417,7 @@ class CollabNetwork:
             '<div id="lambda-section">'
             '<span>&lambda; =</span>'
             f'<input type="number" id="lambda-value" value="{self.decay}" '
-            'step="0.01" min="0" max="2" />'
-            f'<input type="range" id="lambda-slider" min="0" max="2" '
-            f'step="0.01" value="{self.decay}" />'
+            'step="0.005" min="0" max="0.2" />'
             '</div>'
             '</div>'
         )
@@ -383,6 +425,7 @@ class CollabNetwork:
         # ── Info panel placeholder ─────────────────────────────────────
         info_panel_html = (
             '</div>'  # close #graph-panel
+            '<div id="resize-handle"></div>'
             '<div id="info-panel">'
             '<div id="info-content">'
             '<p style="color:#aaa;text-align:center;margin-top:80px;'
@@ -407,63 +450,67 @@ class CollabNetwork:
             '#author-section{display:flex;align-items:center;gap:5px;'
             'flex-wrap:wrap;flex:1;min-width:0}'
             '#author-tags{display:flex;gap:4px;flex-wrap:wrap}'
-            '.author-tag{display:inline-flex;align-items:center;gap:2px;'
-            'background:#4C72B0;color:#fff;padding:2px 8px 2px 8px;'
-            'border-radius:12px;font-size:11px;white-space:nowrap}'
+            '.author-tag{display:inline-flex;align-items:center;gap:3px;'
+            'background:#4C72B0;color:#fff;padding:3px 10px;'
+            'border-radius:12px;font-size:14px;white-space:nowrap}'
+            '.author-tag-name{cursor:pointer}'
+            '.author-tag-name:hover{text-decoration:underline}'
             '.author-tag button{background:none;border:none;color:#fff;'
-            'cursor:pointer;font-size:14px;padding:0 1px;opacity:.7;'
+            'cursor:pointer;font-size:16px;padding:0 2px;opacity:.7;'
             'line-height:1}'
             '.author-tag button:hover{opacity:1}'
-            '#add-author-input{padding:4px 8px;border:1px solid #ccc;'
-            'border-radius:4px;font-size:12px;width:220px;font-family:inherit}'
-            '#add-author-btn{padding:4px 12px;background:#4C72B0;color:#fff;'
-            'border:none;border-radius:4px;cursor:pointer;font-size:12px;'
+            '#add-author-input{padding:5px 10px;border:1px solid #ccc;'
+            'border-radius:4px;font-size:14px;width:260px;font-family:inherit}'
+            '#add-author-btn{padding:5px 14px;background:#4C72B0;color:#fff;'
+            'border:none;border-radius:4px;cursor:pointer;font-size:14px;'
             'font-family:inherit}'
             '#add-author-btn:hover{background:#3a5a8c}'
             '#add-author-btn:disabled{opacity:.5;cursor:not-allowed}'
             '#lambda-section{display:flex;align-items:center;gap:8px;'
-            'font-size:13px;color:#444;flex-shrink:0}'
-            '#lambda-value{width:55px;padding:3px 6px;border:1px solid #ccc;'
-            'border-radius:4px;font-size:12px;text-align:center;font-family:inherit}'
-            '#lambda-slider{width:120px}'
+            'font-size:15px;color:#444;flex-shrink:0}'
+            '#lambda-value{width:60px;padding:4px 6px;border:1px solid #ccc;'
+            'border-radius:4px;font-size:14px;text-align:center;font-family:inherit}'
             '#main-container{flex:1;min-height:0;display:flex}'
             '#graph-panel{flex:1;min-width:0;position:relative;overflow:hidden}'
             '#graph-panel .card{width:100%!important;height:100%!important;'
             'margin:0!important;border:none!important}'
             '#graph-panel .card-body,#graph-panel #mynetwork{width:100%!important;'
             'height:100%!important;border:none!important;padding:0!important}'
-            '#info-panel{width:420px;min-width:420px;border-left:1px solid #ddd;'
+            '#resize-handle{width:5px;cursor:col-resize;background:#e0e0e0;'
+            'flex-shrink:0;transition:background .15s}'
+            '#resize-handle:hover,#resize-handle.active{background:#4C72B0}'
+            '#info-panel{width:420px;min-width:200px;border-left:1px solid #ddd;'
             'overflow-y:auto;background:#fcfcfc;padding:0}'
             '#info-content{padding:16px}'
-            '.sort-row{font-size:12px;color:#666;margin-bottom:10px}'
-            '#sort-select{font-size:12px;padding:3px 6px;border:1px solid #ccc;'
+            '.sort-row{font-size:14px;color:#666;margin-bottom:10px}'
+            '#sort-select{font-size:14px;padding:4px 8px;border:1px solid #ccc;'
             'border-radius:4px;margin-left:4px;font-family:inherit}'
-            '.paper-entry{padding:10px 0;border-bottom:1px solid #f0f0f0}'
+            '.paper-entry{padding:12px 0;border-bottom:1px solid #f0f0f0}'
             '.paper-entry:last-child{border-bottom:none}'
-            '.paper-meta{font-size:12px;margin-bottom:3px}'
-            '.paper-cat{background:#e8eaf6;color:#283593;padding:1px 6px;'
-            'border-radius:3px;font-size:11px;font-weight:500;margin-right:6px}'
+            '.paper-meta{font-size:14px;margin-bottom:4px}'
+            '.paper-cat{background:#e8eaf6;color:#283593;padding:2px 8px;'
+            'border-radius:3px;font-size:13px;font-weight:500;margin-right:6px}'
             '.paper-arxiv{color:#1565c0;text-decoration:none;margin-right:8px;'
-            'font-size:12px}'
+            'font-size:14px}'
             '.paper-arxiv:hover{text-decoration:underline}'
-            '.paper-date{color:#999;font-size:11px}'
-            '.paper-title{font-size:13px;font-weight:500;margin:3px 0;color:#222}'
-            '.paper-authors{font-size:12px;color:#555;line-height:1.4}'
+            '.paper-date{color:#999;font-size:13px}'
+            '.paper-title{font-size:15px;font-weight:500;margin:4px 0;color:#222}'
+            '.paper-authors{font-size:14px;color:#555;line-height:1.5}'
             '.net-author{font-weight:700;color:#1565c0;cursor:pointer}'
             '.net-author:hover{text-decoration:underline}'
-            '.paper-stats{font-size:11px;color:#999;margin-top:3px}'
-            '.cat-row{display:flex;align-items:center;margin:2px 0}'
-            '.cat-name{width:110px;font-size:12px;color:#444}'
-            '.cat-bar{height:14px;background:#4C72B0;border-radius:2px;'
+            '.paper-stats{font-size:13px;color:#999;margin-top:4px}'
+            '.cat-row{display:flex;align-items:center;margin:3px 0}'
+            '.cat-name{width:120px;font-size:14px;color:#444}'
+            '.cat-bar{height:16px;background:#4C72B0;border-radius:2px;'
             'min-width:2px;margin-right:8px}'
-            '.cat-count{font-size:11px;color:#888}'
-            '.info-section{margin-bottom:16px}'
-            '.info-label{font-size:11px;color:#999;text-transform:uppercase;'
+            '.cat-count{font-size:13px;color:#888}'
+            '.info-section{margin-bottom:18px}'
+            '.info-label{font-size:13px;color:#999;text-transform:uppercase;'
             'letter-spacing:.5px;margin-bottom:4px}'
-            '.info-value{font-size:14px;color:#333}'
-            '.info-title{font-size:16px;font-weight:600;color:#222;'
+            '.info-value{font-size:16px;color:#333}'
+            '.info-title{font-size:18px;font-weight:600;color:#222;'
             'margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #4C72B0}'
-            '.edge-title{font-size:14px;font-weight:600;color:#222;'
+            '.edge-title{font-size:16px;font-weight:600;color:#222;'
             'margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #4C72B0}'
             '</style>'
         )
@@ -567,7 +614,7 @@ function renderAuthorTags() {
     var c = document.getElementById("author-tags"); var h = "";
     var bais = GRAPH_DATA.network_bais;
     for (var i=0;i<bais.length;i++) {
-        h += '<span class="author-tag">'+esc(shortBai(bais[i]))+' <button onclick="removeAuthor(\''+escA(bais[i])+'\')">&times;</button></span>';
+        h += '<span class="author-tag"><span class="author-tag-name" onclick="selectNode(\''+escA(bais[i])+'\')">'+esc(bais[i])+'</span> <button onclick="removeAuthor(\''+escA(bais[i])+'\')">&times;</button></span>';
     }
     c.innerHTML = h;
 }
@@ -667,9 +714,20 @@ async function addAuthor(bai) {
         var categories = Object.keys(catCount).map(function(c){return{category:c,count:catCount[c]};}).sort(function(a,b){return b.count-a.count;});
         var totalWC = 0;
         for (var i=0;i<papers.length;i++) totalWC += papers[i].weighted_citation;
-        GRAPH_DATA.authors[bai] = {num_papers:papers.length, weighted_citations:totalWC, categories:categories, papers:papers};
+        var fullName="", lastName="";
+        for (var i=0;i<papers.length&&!fullName;i++) {
+            var auList = papers[i].authors||[];
+            for (var j=0;j<auList.length;j++) {
+                if (auList[j].bai===bai && auList[j].name) {
+                    fullName=auList[j].name;
+                    var ci=fullName.indexOf(", ");
+                    lastName=ci>=0?fullName.substring(0,ci):fullName;
+                    break;
+                }
+            }
+        }
+        GRAPH_DATA.authors[bai] = {num_papers:papers.length, weighted_citations:totalWC, categories:categories, papers:papers, full_name:fullName, last_name:lastName};
         GRAPH_DATA.network_bais.push(bai);
-        GRAPH_DATA.network_bais.sort();
 
         // Compute edges with existing authors
         var nodeDS = network.body.data.nodes;
@@ -692,9 +750,9 @@ async function addAuthor(bai) {
         updateNetworkBais();
 
         // Add vis.js node
-        nodeDS.add({id:bai, label:shortBai(bai), shape:"circle", size:35,
+        nodeDS.add({id:bai, label:lastName||bai, shape:"circle", size:35,
             color:{background:"#4C72B0",border:"#3a5a8c",highlight:{background:"#5c8fd6",border:"#3a5a8c"}},
-            font:{size:13,color:"#ffffff",face:"arial",strokeWidth:0},
+            font:{size:16,color:"#ffffff",face:"arial",strokeWidth:2,strokeColor:"#2a4a7a"},
             title:bai
         });
         // Add vis.js edges
@@ -777,7 +835,12 @@ function showNodeInfo(bai) {
     if (!data) return;
     currentInfoType = "node"; currentInfoId = bai;
     var el = document.getElementById("info-content");
-    var h = '<div class="info-title">'+esc(bai)+'</div>';
+    var dispName = data.full_name ? flipName(data.full_name) : bai;
+    var inspireUrl = "https://inspirehep.net/literature?sort=mostrecent&q=a+"+encodeURIComponent(bai);
+    var h = '<div class="info-title">'+esc(dispName)+'</div>';
+    h += '<div style="font-size:12px;color:#666;margin-top:-8px;margin-bottom:12px">';
+    h += esc(bai)+' &middot; <a href="'+inspireUrl+'" target="_blank" style="color:#1565c0;text-decoration:none">View on INSPIRE</a>';
+    h += '</div>';
     h += '<div class="info-section"><div style="display:flex;gap:24px">';
     h += '<div><div class="info-label">Papers</div><div class="info-value">'+data.num_papers+'</div></div>';
     h += '<div><div class="info-label">Weighted Citations</div><div class="info-value">'+data.weighted_citations.toFixed(2)+'</div></div>';
@@ -869,6 +932,9 @@ function renderPapers(papers, sortBy) {
 (function init() {
     if (typeof network === "undefined") { setTimeout(init, 100); return; }
     network.setOptions({interaction:{zoomView:false}});
+    network.once("stabilizationIterationsDone", function() {
+        network.fit({animation:{duration:400,easingFunction:"easeInOutQuad"},maxZoomLevel:1.5});
+    });
     var container = document.getElementById("mynetwork");
     if (container) {
         container.addEventListener("wheel", function(e) {
@@ -886,17 +952,10 @@ function renderPapers(papers, sortBy) {
         }
     });
     renderAuthorTags();
-    document.getElementById("lambda-slider").addEventListener("input", function() {
-        var v = parseFloat(this.value);
-        document.getElementById("lambda-value").value = v.toFixed(2);
-        GRAPH_DATA.decay = v;
-        recomputeAllWeights(); updateGraphVisuals(); refreshInfoPanel();
-    });
     document.getElementById("lambda-value").addEventListener("change", function() {
         var v = parseFloat(this.value);
-        if (isNaN(v)||v<0) v=0; if(v>2) v=2;
-        this.value = v.toFixed(2);
-        document.getElementById("lambda-slider").value = v;
+        if (isNaN(v)||v<0) v=0; if(v>0.2) v=0.2;
+        this.value = v.toFixed(3);
         GRAPH_DATA.decay = v;
         recomputeAllWeights(); updateGraphVisuals(); refreshInfoPanel();
     });
@@ -906,6 +965,44 @@ function renderPapers(papers, sortBy) {
     document.getElementById("add-author-input").addEventListener("keydown", function(e) {
         if (e.key==="Enter") addAuthor(this.value);
     });
+
+    // Formula explanation toggle
+    var helpBtn = document.getElementById("formula-help");
+    var explDiv = document.getElementById("formula-explanation");
+    if (helpBtn && explDiv) {
+        helpBtn.addEventListener("click", function() {
+            explDiv.style.display = explDiv.style.display === "none" ? "block" : "none";
+        });
+    }
+
+    // Resizable info panel
+    var handle = document.getElementById("resize-handle");
+    var infoPanel = document.getElementById("info-panel");
+    if (handle && infoPanel) {
+        var dragging = false;
+        handle.addEventListener("mousedown", function(e) {
+            e.preventDefault(); dragging = true;
+            handle.classList.add("active");
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+        });
+        document.addEventListener("mousemove", function(e) {
+            if (!dragging) return;
+            var newWidth = window.innerWidth - e.clientX;
+            if (newWidth < 200) newWidth = 200;
+            if (newWidth > window.innerWidth * 0.6) newWidth = window.innerWidth * 0.6;
+            infoPanel.style.width = newWidth + "px";
+            infoPanel.style.minWidth = newWidth + "px";
+        });
+        document.addEventListener("mouseup", function() {
+            if (dragging) {
+                dragging = false;
+                handle.classList.remove("active");
+                document.body.style.cursor = "";
+                document.body.style.userSelect = "";
+            }
+        });
+    }
 })();
 '''
 
@@ -1030,5 +1127,5 @@ def build_collaboration_network(
 
     return CollabNetwork(
         graph=G, edges=edges, decay=decay, max_authors=max_authors,
-        author_papers=author_papers,
+        author_papers=author_papers, author_order=list(author_ids),
     )

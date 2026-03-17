@@ -1,7 +1,7 @@
 """Tools for fetching and analyzing data from INSPIRE-HEP."""
 
-from inspire_tools.client import InspireClient
-from inspire_tools.analysis import (
+from inspire_network.client import InspireClient
+from inspire_network.analysis import (
     get_author_papers,
     count_arxiv_categories,
     build_collaboration_network,
