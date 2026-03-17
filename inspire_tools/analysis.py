@@ -935,7 +935,7 @@ function renderPapers(papers, sortBy) {
             1,
         )
 
-        with open(save_path, "w") as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             f.write(html)
 
         print(f"Saved to {save_path}")

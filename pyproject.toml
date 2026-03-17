@@ -23,5 +23,8 @@ inspire-papers = "inspire_tools.cli:papers_main"
 inspire-categories = "inspire_tools.cli:categories_main"
 inspire-collab = "inspire_tools.cli:collab_main"
 
+[tool.setuptools.packages.find]
+include = ["inspire_tools*"]
+
 [tool.ruff]
 line-length = 100
