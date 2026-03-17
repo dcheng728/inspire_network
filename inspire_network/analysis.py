@@ -358,16 +358,10 @@ class CollabNetwork:
         for u, v in G.edges():
             d = G[u][v]
             intensity = d["weighted_citations"]
-            n_papers = d["num_papers"]
             log_w = math.log1p(intensity)
             width = 1 + 8 * log_w / max_log
             net.add_edge(
                 u, v, value=width,
-                title=(
-                    f"{u} — {v}\n"
-                    f"Weighted Citations: {intensity:.2f}\n"
-                    f"Papers: {n_papers}"
-                ),
                 color=_edge_color(intensity),
             )
 
@@ -428,9 +422,23 @@ class CollabNetwork:
             '<div id="resize-handle"></div>'
             '<div id="info-panel">'
             '<div id="info-content">'
-            '<p style="color:#aaa;text-align:center;margin-top:80px;'
-            'font-size:14px;line-height:1.6">'
-            'Click a node or edge<br>to see details</p>'
+            '<div class="welcome-msg">'
+            '<p style="font-size:16px;font-weight:600;color:#333;margin-bottom:12px">'
+            'Collaboration Network</p>'
+            '<p><b>Nodes</b> represent authors. '
+            'Size reflects the number of collaboration papers.</p>'
+            '<p><b>Edges</b> connect co-authors. '
+            'Thickness and colour reflect the weighted citation score '
+            'of their shared papers.</p>'
+            '<p style="margin-top:16px"><b>How to explore:</b></p>'
+            '<ul style="margin:4px 0 0 0;padding-left:20px">'
+            '<li>Click a node to see an author\'s papers and categories</li>'
+            '<li>Click an edge to see shared publications</li>'
+            '<li>Hover over nodes to highlight connections</li>'
+            '<li>Use Tab/Shift+Tab to cycle through authors</li>'
+            '<li>Press Escape to deselect</li>'
+            '</ul>'
+            '</div>'
             '</div>'
             '</div>'
             '</div>'  # close #main-container
@@ -512,6 +520,35 @@ class CollabNetwork:
             'margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #4C72B0}'
             '.edge-title{font-size:16px;font-weight:600;color:#222;'
             'margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #4C72B0}'
+            '.welcome-msg{padding:20px;color:#666;font-size:14px;line-height:1.7}'
+            '.welcome-msg ul{line-height:2}'
+            '#controls-toggle-bar{padding:4px 20px;background:#f5f5f5;'
+            'border-bottom:1px solid #e0e0e0;flex-shrink:0}'
+            '#controls-toggle{background:none;border:1px solid #ccc;border-radius:4px;'
+            'cursor:pointer;font-size:12px;padding:2px 10px;color:#666;font-family:inherit}'
+            '#controls-toggle:hover{background:#e8e8e8}'
+            '#edge-tooltip{display:none;position:fixed;pointer-events:none;'
+            'background:#fff;border:1px solid #ddd;border-radius:6px;padding:8px 12px;'
+            'box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:13px;z-index:9999;'
+            'max-width:280px;line-height:1.5}'
+            '.back-link{cursor:pointer;color:#1565c0;font-size:13px;'
+            'text-decoration:none;display:inline-block;margin-bottom:8px}'
+            '.back-link:hover{text-decoration:underline}'
+            '.filter-bar{margin-bottom:10px}'
+            '#paper-search{width:100%;padding:6px 10px;border:1px solid #ccc;'
+            'border-radius:4px;font-size:13px;margin-bottom:6px;'
+            'box-sizing:border-box;font-family:inherit}'
+            '.filter-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;'
+            'font-size:13px;color:#666}'
+            '#cat-filter{font-size:13px;padding:4px 8px;border:1px solid #ccc;'
+            'border-radius:4px;font-family:inherit}'
+            '@media(max-width:768px){'
+            '#main-container{flex-direction:column}'
+            '#info-panel{width:100%!important;min-width:0!important;'
+            'max-height:50vh;border-left:none;border-top:1px solid #ddd}'
+            '#resize-handle{display:none}'
+            '#add-author-input{width:140px}'
+            '}'
             '</style>'
         )
 
@@ -522,6 +559,9 @@ var globalSort = "recent";
 var currentYear = GRAPH_DATA.current_year || 2026;
 var currentInfoType = null;
 var currentInfoId = null;
+var navHistory = [];
+var currentPapers = [];
+var originalNodeStyles = {};
 
 // ── Utilities ──────────────────────────────────────
 function paperAge(d) {
@@ -603,8 +643,7 @@ function updateGraphVisuals() {
         var logW = Math.log1p(intensity);
         edgeDS.update({
             id: ve.id, value: 1+8*logW/maxLog,
-            color: edgeColor(intensity, maxLog),
-            title: nodes[0]+" \u2014 "+nodes[1]+"\nWeighted Citations: "+intensity.toFixed(2)+"\nPapers: "+data.num_papers
+            color: edgeColor(intensity, maxLog)
         });
     }
 }
@@ -750,11 +789,12 @@ async function addAuthor(bai) {
         updateNetworkBais();
 
         // Add vis.js node
+        var nodeColor = {background:"#4C72B0",border:"#3a5a8c",highlight:{background:"#5c8fd6",border:"#3a5a8c"}};
+        var nodeFont = {size:16,color:"#ffffff",face:"arial",strokeWidth:2,strokeColor:"#2a4a7a"};
         nodeDS.add({id:bai, label:lastName||bai, shape:"circle", size:35,
-            color:{background:"#4C72B0",border:"#3a5a8c",highlight:{background:"#5c8fd6",border:"#3a5a8c"}},
-            font:{size:16,color:"#ffffff",face:"arial",strokeWidth:2,strokeColor:"#2a4a7a"},
-            title:bai
+            color:nodeColor, font:nodeFont, title:bai
         });
+        originalNodeStyles[bai] = {color:JSON.parse(JSON.stringify(nodeColor)), font:JSON.parse(JSON.stringify(nodeFont))};
         // Add vis.js edges
         var maxLog = getMaxLog();
         var ekeys = Object.keys(GRAPH_DATA.edges);
@@ -763,8 +803,7 @@ async function addAuthor(bai) {
             if (e.author_a === bai || e.author_b === bai) {
                 var logW = Math.log1p(e.weighted_citations);
                 edgeDS.add({from:e.author_a, to:e.author_b, value:1+8*logW/maxLog,
-                    color:edgeColor(e.weighted_citations, maxLog),
-                    title:e.author_a+" \u2014 "+e.author_b+"\nWeighted Citations: "+e.weighted_citations.toFixed(2)+"\nPapers: "+e.num_papers
+                    color:edgeColor(e.weighted_citations, maxLog)
                 });
             }
         }
@@ -778,6 +817,7 @@ async function addAuthor(bai) {
 function removeAuthor(bai) {
     if (!GRAPH_DATA.authors[bai]) return;
     delete GRAPH_DATA.authors[bai];
+    delete originalNodeStyles[bai];
     GRAPH_DATA.network_bais = GRAPH_DATA.network_bais.filter(function(b){return b!==bai;});
     var ekeys = Object.keys(GRAPH_DATA.edges);
     for (var i=0;i<ekeys.length;i++) {
@@ -795,8 +835,16 @@ function removeAuthor(bai) {
 
 function clearInfoPanel() {
     document.getElementById("info-content").innerHTML =
-        '<p style="color:#aaa;text-align:center;margin-top:80px;font-size:14px;line-height:1.6">Click a node or edge<br>to see details</p>';
+        '<div class="welcome-msg">'
+        +'<p style="font-size:16px;font-weight:600;color:#333;margin-bottom:12px">Collaboration Network</p>'
+        +'<p><b>Nodes</b> represent authors. Size reflects the number of collaboration papers.</p>'
+        +'<p><b>Edges</b> connect co-authors. Thickness and colour reflect the weighted citation score of their shared papers.</p>'
+        +'<p style="margin-top:16px"><b>How to explore:</b></p>'
+        +'<ul style="margin:4px 0 0 0;padding-left:20px"><li>Click a node to see an author\'s papers and categories</li>'
+        +'<li>Click an edge to see shared publications</li><li>Hover over nodes to highlight connections</li>'
+        +'<li>Use Tab/Shift+Tab to cycle through authors</li><li>Press Escape to deselect</li></ul></div>';
     currentInfoType = null; currentInfoId = null;
+    navHistory = []; currentPapers = [];
 }
 
 // ── Info panel ─────────────────────────────────────
@@ -830,14 +878,80 @@ function edgeCategoriesFromPapers(papers) {
     return Object.keys(cc).map(function(c){return{category:c,count:cc[c]};}).sort(function(a,b){return b.count-a.count;});
 }
 
-function showNodeInfo(bai) {
+function pushNav() {
+    if (currentInfoType !== null) {
+        navHistory.push({type:currentInfoType, id:currentInfoId});
+        if (navHistory.length > 50) navHistory.shift();
+    }
+}
+function goBack() {
+    if (!navHistory.length) return;
+    var prev = navHistory.pop();
+    if (prev.type === "node") showNodeInfo(prev.id, true);
+    else if (prev.type === "edge") {
+        var p = prev.id.split("|");
+        showEdgeInfo(p[0], p[1], true);
+    }
+}
+function backButtonHTML() {
+    if (!navHistory.length) return "";
+    return '<a class="back-link" onclick="goBack()">&larr; Back</a>';
+}
+
+function filterBarHTML(papers) {
+    var cats = {};
+    for (var i=0;i<papers.length;i++) {
+        if (papers[i].primary_category) cats[papers[i].primary_category] = true;
+    }
+    var catKeys = Object.keys(cats).sort();
+    var h = '<div class="filter-bar">';
+    h += '<input id="paper-search" placeholder="Search papers..." />';
+    h += '<div class="filter-row">';
+    h += '<select id="cat-filter"><option value="">All categories</option>';
+    for (var i=0;i<catKeys.length;i++) h += '<option value="'+esc(catKeys[i])+'">'+esc(catKeys[i])+'</option>';
+    h += '</select>';
+    h += ' Sort: <select id="sort-select">'
+       +'<option value="recent"'+(globalSort==="recent"?" selected":"")+'>Most Recent</option>'
+       +'<option value="weighted"'+(globalSort==="weighted"?" selected":"")+'>Most Weighted</option>'
+       +'<option value="cited"'+(globalSort==="cited"?" selected":"")+'>Most Cited</option>'
+       +'</select>';
+    h += '</div></div>';
+    return h;
+}
+function filterAndRenderPapers() {
+    var query = (document.getElementById("paper-search")||{}).value||"";
+    query = query.toLowerCase();
+    var catFilter = (document.getElementById("cat-filter")||{}).value||"";
+    var filtered = currentPapers.filter(function(p) {
+        if (query && p.title.toLowerCase().indexOf(query) < 0) return false;
+        if (catFilter && p.primary_category !== catFilter) return false;
+        return true;
+    });
+    var el = document.getElementById("paper-list");
+    if (el) el.innerHTML = renderPapers(filtered, globalSort);
+}
+function bindFilterBar() {
+    var search = document.getElementById("paper-search");
+    if (search) search.addEventListener("input", filterAndRenderPapers);
+    var catSel = document.getElementById("cat-filter");
+    if (catSel) catSel.addEventListener("change", filterAndRenderPapers);
+    var sortSel = document.getElementById("sort-select");
+    if (sortSel) sortSel.addEventListener("change", function() {
+        globalSort = this.value; filterAndRenderPapers();
+    });
+}
+
+function showNodeInfo(bai, isBack) {
     var data = GRAPH_DATA.authors[bai];
     if (!data) return;
+    if (!isBack) pushNav();
     currentInfoType = "node"; currentInfoId = bai;
+    currentPapers = data.papers;
     var el = document.getElementById("info-content");
     var dispName = data.full_name ? flipName(data.full_name) : bai;
     var inspireUrl = "https://inspirehep.net/literature?sort=mostrecent&q=a+"+encodeURIComponent(bai);
-    var h = '<div class="info-title">'+esc(dispName)+'</div>';
+    var h = backButtonHTML();
+    h += '<div class="info-title">'+esc(dispName)+'</div>';
     h += '<div style="font-size:12px;color:#666;margin-top:-8px;margin-bottom:12px">';
     h += esc(bai)+' &middot; <a href="'+inspireUrl+'" target="_blank" style="color:#1565c0;text-decoration:none">View on INSPIRE</a>';
     h += '</div>';
@@ -847,23 +961,30 @@ function showNodeInfo(bai) {
     h += '</div></div>';
     h += categoriesHTML(data.categories);
     h += '<div class="info-section"><div class="info-label">Papers</div>';
-    h += sortDropdownHTML();
+    h += filterBarHTML(data.papers);
     h += '<div id="paper-list">'+renderPapers(data.papers, globalSort)+'</div></div>';
     el.innerHTML = h;
-    bindSortDropdown();
+    bindFilterBar();
 }
 
-function showEdgeInfo(a, b) {
+function showEdgeInfo(a, b, isBack) {
     var key = a+"|"+b;
     var data = GRAPH_DATA.edges[key];
     if (!data) { key = b+"|"+a; data = GRAPH_DATA.edges[key]; }
     if (!data) return;
+    if (!isBack) pushNav();
     currentInfoType = "edge"; currentInfoId = key;
+    currentPapers = data.papers;
     var el = document.getElementById("info-content");
-    var h = '<div class="edge-title">';
-    h += '<a class="net-author" onclick="selectNode(\''+escA(data.author_a)+'\')">'+esc(data.author_a)+'</a>';
+    var nameA = GRAPH_DATA.authors[data.author_a] && GRAPH_DATA.authors[data.author_a].full_name
+        ? flipName(GRAPH_DATA.authors[data.author_a].full_name) : data.author_a;
+    var nameB = GRAPH_DATA.authors[data.author_b] && GRAPH_DATA.authors[data.author_b].full_name
+        ? flipName(GRAPH_DATA.authors[data.author_b].full_name) : data.author_b;
+    var h = backButtonHTML();
+    h += '<div class="edge-title">';
+    h += '<a class="net-author" onclick="selectNode(\''+escA(data.author_a)+'\')">'+esc(nameA)+'</a>';
     h += ' &harr; ';
-    h += '<a class="net-author" onclick="selectNode(\''+escA(data.author_b)+'\')">'+esc(data.author_b)+'</a>';
+    h += '<a class="net-author" onclick="selectNode(\''+escA(data.author_b)+'\')">'+esc(nameB)+'</a>';
     h += '</div>';
     h += '<div class="info-section"><div style="display:flex;gap:24px">';
     h += '<div><div class="info-label">Shared Papers</div><div class="info-value">'+data.num_papers+'</div></div>';
@@ -871,22 +992,10 @@ function showEdgeInfo(a, b) {
     h += '</div></div>';
     h += categoriesHTML(edgeCategoriesFromPapers(data.papers));
     h += '<div class="info-section"><div class="info-label">Papers</div>';
-    h += sortDropdownHTML();
+    h += filterBarHTML(data.papers);
     h += '<div id="paper-list">'+renderPapers(data.papers, globalSort)+'</div></div>';
     el.innerHTML = h;
-    bindSortDropdown();
-}
-
-function sortDropdownHTML() {
-    return '<div class="sort-row">Sort by <select id="sort-select">'
-        +'<option value="recent"'+(globalSort==="recent"?" selected":"")+'>Most Recent</option>'
-        +'<option value="weighted"'+(globalSort==="weighted"?" selected":"")+'>Most Weighted Citations</option>'
-        +'<option value="cited"'+(globalSort==="cited"?" selected":"")+'>Most Citations</option>'
-        +'</select></div>';
-}
-function bindSortDropdown() {
-    var sel = document.getElementById("sort-select");
-    if (sel) sel.addEventListener("change", function(){ globalSort=this.value; refreshInfoPanel(); });
+    bindFilterBar();
 }
 
 function selectNode(bai) {
@@ -931,7 +1040,7 @@ function renderPapers(papers, sortBy) {
 // ── Init ───────────────────────────────────────────
 (function init() {
     if (typeof network === "undefined") { setTimeout(init, 100); return; }
-    network.setOptions({interaction:{zoomView:false}});
+    network.setOptions({interaction:{zoomView:false, hover:true, tooltipDelay:200}});
     function fitNetwork() {
         var padding = 40;
         network.fit({animation:{duration:400,easingFunction:"easeInOutQuad"},maxZoomLevel:2.0,
@@ -939,7 +1048,17 @@ function renderPapers(papers, sortBy) {
                      padding:padding});
     }
     network.once("stabilizationIterationsDone", function() {
-        setTimeout(fitNetwork, 300);
+        setTimeout(function() {
+            fitNetwork();
+            // Cache original node styles
+            var allN = network.body.data.nodes.get();
+            for (var i=0;i<allN.length;i++) {
+                originalNodeStyles[allN[i].id] = {
+                    color: JSON.parse(JSON.stringify(allN[i].color||{})),
+                    font: JSON.parse(JSON.stringify(allN[i].font||{}))
+                };
+            }
+        }, 300);
     });
     window.addEventListener("resize", function() { fitNetwork(); });
     var container = document.getElementById("mynetwork");
@@ -958,11 +1077,87 @@ function renderPapers(papers, sortBy) {
             if (nodes.length===2) showEdgeInfo(nodes[0], nodes[1]);
         }
     });
+
+    // ── Node hover highlighting ─────────────────────
+    network.on("hoverNode", function(params) {
+        var hoveredId = params.node;
+        var connNodes = network.getConnectedNodes(hoveredId);
+        var connSet = {};
+        connSet[hoveredId] = true;
+        for (var i=0;i<connNodes.length;i++) connSet[connNodes[i]] = true;
+        var allNodes = network.body.data.nodes.get();
+        var nodeUpdates = [];
+        for (var i=0;i<allNodes.length;i++) {
+            var n = allNodes[i];
+            if (!connSet[n.id]) {
+                nodeUpdates.push({id:n.id,
+                    color:{background:"#d0d0d0",border:"#bbb",
+                           highlight:{background:"#d0d0d0",border:"#bbb"}},
+                    font:{color:"#ccc",size:(n.font?n.font.size:16),face:"arial",strokeWidth:0}});
+            }
+        }
+        network.body.data.nodes.update(nodeUpdates);
+        var allEdges = network.body.data.edges.get();
+        var edgeUpdates = [];
+        for (var i=0;i<allEdges.length;i++) {
+            var e = allEdges[i];
+            if (!connSet[e.from] || !connSet[e.to]) {
+                edgeUpdates.push({id:e.id, color:{color:"#eee",opacity:0.3}});
+            }
+        }
+        network.body.data.edges.update(edgeUpdates);
+    });
+    network.on("blurNode", function() {
+        // Restore original node styles
+        var allNodes = network.body.data.nodes.get();
+        var nodeUpdates = [];
+        for (var i=0;i<allNodes.length;i++) {
+            var n = allNodes[i];
+            var orig = originalNodeStyles[n.id];
+            if (orig) {
+                nodeUpdates.push({id:n.id,
+                    color:JSON.parse(JSON.stringify(orig.color)),
+                    font:JSON.parse(JSON.stringify(orig.font))});
+            }
+        }
+        network.body.data.nodes.update(nodeUpdates);
+        updateGraphVisuals();
+    });
+
+    // ── Edge hover tooltip ──────────────────────────
+    var edgeTip = document.getElementById("edge-tooltip");
+    network.on("hoverEdge", function(params) {
+        var nodes = network.getConnectedNodes(params.edge);
+        if (nodes.length !== 2) return;
+        var key = nodes[0]+"|"+nodes[1];
+        var data = GRAPH_DATA.edges[key];
+        if (!data) { key = nodes[1]+"|"+nodes[0]; data = GRAPH_DATA.edges[key]; }
+        if (!data) return;
+        var nA = GRAPH_DATA.authors[data.author_a]&&GRAPH_DATA.authors[data.author_a].full_name
+            ? flipName(GRAPH_DATA.authors[data.author_a].full_name) : data.author_a;
+        var nB = GRAPH_DATA.authors[data.author_b]&&GRAPH_DATA.authors[data.author_b].full_name
+            ? flipName(GRAPH_DATA.authors[data.author_b].full_name) : data.author_b;
+        edgeTip.innerHTML = '<b>'+esc(nA)+'</b> &harr; <b>'+esc(nB)+'</b><br>'
+            +data.num_papers+' shared paper'+(data.num_papers!==1?'s':'');
+        edgeTip.style.display = "block";
+    });
+    network.on("blurEdge", function() {
+        edgeTip.style.display = "none";
+    });
+    if (container) {
+        container.addEventListener("mousemove", function(e) {
+            if (edgeTip.style.display !== "none") {
+                edgeTip.style.left = (e.clientX + 12) + "px";
+                edgeTip.style.top = (e.clientY + 12) + "px";
+            }
+        });
+    }
+
     renderAuthorTags();
     document.getElementById("lambda-value").addEventListener("change", function() {
         var v = parseFloat(this.value);
-        if (isNaN(v)||v<0) v=0; if(v>0.2) v=0.2;
-        this.value = v.toFixed(3);
+        if (isNaN(v)||v<0) v=0;
+        this.value = v;
         GRAPH_DATA.decay = v;
         recomputeAllWeights(); updateGraphVisuals(); refreshInfoPanel();
     });
@@ -981,6 +1176,38 @@ function renderPapers(papers, sortBy) {
             explDiv.style.display = explDiv.style.display === "none" ? "block" : "none";
         });
     }
+
+    // ── Controls toggle ─────────────────────────────
+    var ctrlToggle = document.getElementById("controls-toggle");
+    if (ctrlToggle) {
+        ctrlToggle.addEventListener("click", function() {
+            var ctrl = document.getElementById("controls");
+            var collapsed = ctrl.style.display === "none";
+            ctrl.style.display = collapsed ? "" : "none";
+            this.innerHTML = collapsed ? "&#9660; Controls" : "&#9654; Controls";
+        });
+    }
+
+    // ── Keyboard navigation ─────────────────────────
+    var kbSelectedIdx = -1;
+    document.addEventListener("keydown", function(e) {
+        if (e.target.tagName==="INPUT"||e.target.tagName==="SELECT"||e.target.tagName==="TEXTAREA") return;
+        if (e.key === "Tab") {
+            e.preventDefault();
+            var ids = network.body.data.nodes.getIds();
+            if (!ids.length) return;
+            if (e.shiftKey) {
+                kbSelectedIdx = kbSelectedIdx <= 0 ? ids.length - 1 : kbSelectedIdx - 1;
+            } else {
+                kbSelectedIdx = (kbSelectedIdx + 1) % ids.length;
+            }
+            selectNode(ids[kbSelectedIdx]);
+        } else if (e.key === "Escape") {
+            network.unselectAll();
+            clearInfoPanel();
+            kbSelectedIdx = -1;
+        }
+    });
 
     // Resizable info panel
     var handle = document.getElementById("resize-handle");
@@ -1028,14 +1255,20 @@ function renderPapers(papers, sortBy) {
         html = html.replace("</head>", f"{custom_css}\n</head>", 1)
         html = html.replace(
             "<body>",
-            f"<body>\n{header_html}\n{controls_html}\n"
+            f"<body>\n{header_html}\n"
+            f'<div id="controls-toggle-bar">'
+            f'<button id="controls-toggle">&#9660; Controls</button>'
+            f'</div>\n'
+            f"{controls_html}\n"
             f'<div id="main-container">\n'
             f'<div id="graph-panel">\n',
             1,
         )
         html = html.replace(
             "</body>",
-            f"{info_panel_html}\n{custom_js}\n</body>",
+            f"{info_panel_html}\n"
+            f'<div id="edge-tooltip"></div>\n'
+            f"{custom_js}\n</body>",
             1,
         )
 
