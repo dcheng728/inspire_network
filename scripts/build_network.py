@@ -1,7 +1,7 @@
 """Build the collaboration network and write the interactive HTML page."""
 
 # I = Sum_i c_i * exp(-lambda * age_i)
-decay = 0.2       # lambda: slower decay means older papers stay relevant
+decay = 0.1       # lambda: slower decay means older papers stay relevant
 
 from inspire_network import (
     InspireClient,
@@ -48,11 +48,12 @@ imperial_authors = ["Arkady.A.Tseytlin.1",
                     ]
 
 other_authors = [
-    "G.tHooft.1",
-    "M.J.G.Veltman.1",
-    "Edward.Witten.1",
+    "Paul.K.Townsend.1",
+    "Pieter.Van.Nieuwenhuizen.1",
+    "Michael.J.Duff.1",
     "Stephen.W.Hawking.1",
     "G.W.Gibbons.1",
+    "M.J.Perry.1",
 ]
 
 authors = other_authors

@@ -417,7 +417,7 @@ class CollabNetwork:
             '<div id="lambda-section">'
             '<span>&lambda; =</span>'
             f'<input type="number" id="lambda-value" value="{self.decay}" '
-            'step="0.005" min="0" max="0.2" />'
+            'step="0.01" min="0" />'
             '</div>'
             '</div>'
         )
@@ -932,9 +932,16 @@ function renderPapers(papers, sortBy) {
 (function init() {
     if (typeof network === "undefined") { setTimeout(init, 100); return; }
     network.setOptions({interaction:{zoomView:false}});
+    function fitNetwork() {
+        var padding = 40;
+        network.fit({animation:{duration:400,easingFunction:"easeInOutQuad"},maxZoomLevel:2.0,
+                     minZoomLevel:0.3, nodes:network.body.data.nodes.getIds(),
+                     padding:padding});
+    }
     network.once("stabilizationIterationsDone", function() {
-        network.fit({animation:{duration:400,easingFunction:"easeInOutQuad"},maxZoomLevel:1.5});
+        setTimeout(fitNetwork, 300);
     });
+    window.addEventListener("resize", function() { fitNetwork(); });
     var container = document.getElementById("mynetwork");
     if (container) {
         container.addEventListener("wheel", function(e) {
