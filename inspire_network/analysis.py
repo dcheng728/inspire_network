@@ -392,6 +392,7 @@ class CollabNetwork:
             '<div id="author-dropdown"></div>'
             '</div>'
             '<button id="add-author-btn">Add</button>'
+            '<button id="clear-all-btn">Clear All</button>'
             '</div>'
             '<div id="lambda-section">'
             '<span>&lambda; =</span>'
@@ -474,6 +475,10 @@ class CollabNetwork:
             'font-family:inherit}'
             '#add-author-btn:hover{background:#3a5a8c}'
             '#add-author-btn:disabled{opacity:.5;cursor:not-allowed}'
+            '#clear-all-btn{padding:5px 14px;background:#888;color:#fff;'
+            'border:none;border-radius:4px;cursor:pointer;font-size:14px;'
+            'font-family:inherit}'
+            '#clear-all-btn:hover{background:#666}'
             '#lambda-section{display:flex;align-items:center;gap:8px;'
             'font-size:15px;color:#444;flex-shrink:0}'
             '#lambda-value{width:60px;padding:4px 6px;border:1px solid #ccc;'
@@ -999,6 +1004,21 @@ function removeAuthor(bai) {
     if (currentInfoType==="node" && currentInfoId===bai) { clearInfoPanel(); }
 }
 
+function clearAllAuthors() {
+    var bais = GRAPH_DATA.network_bais.slice();
+    for (var i=0;i<bais.length;i++) {
+        var connEdges = network.getConnectedEdges(bais[i]);
+        network.body.data.edges.remove(connEdges);
+        network.body.data.nodes.remove(bais[i]);
+    }
+    GRAPH_DATA.authors = {};
+    GRAPH_DATA.edges = {};
+    GRAPH_DATA.network_bais = [];
+    updateNetworkBais();
+    renderAuthorTags();
+    clearInfoPanel();
+}
+
 function clearInfoPanel() {
     document.getElementById("info-content").innerHTML =
         '<div class="welcome-msg">'
@@ -1336,6 +1356,7 @@ function renderPapers(papers, sortBy) {
         var v = authorInput.value.trim();
         if (v) { addAuthor(v); authorInput.value = ""; authorDropdown.style.display = "none"; }
     });
+    document.getElementById("clear-all-btn").addEventListener("click", clearAllAuthors);
     authorInput.addEventListener("input", function() {
         var q = this.value.trim();
         clearTimeout(searchTimer);
